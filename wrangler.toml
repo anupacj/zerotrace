@@ -1,0 +1,8 @@
+name = "trace-zero"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "trace-zero-db"
+database_id = "56448b20-f319-4743-8654-eab00d54d872"

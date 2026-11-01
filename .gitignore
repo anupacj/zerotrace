@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.wrangler/
+.cloudflare/
+.venv/
+__pycache__/
+*.pyc
+
+# Exclude other projects in this container workspace
+cloudflare-dashboard/
+quant-engine/
