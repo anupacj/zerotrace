@@ -5,6 +5,7 @@
  * Rules:
  * - NO brittle attributes (No window.innerWidth/innerHeight, No navigator.storage.estimate)
  * - Deterministic across Normal vs Incognito/Private Browsing sessions on the same physical hardware
+ * - Resistant to browser anti-fingerprinting noise (Brave Farbling) via decoupled un-farbled silicon anchors
  * - Collects 6 discrete vectors with execution timing (ms) and entropy estimates (bits)
  */
 
@@ -24,6 +25,10 @@ export interface FingerprintReport {
   timestamp: number;
   primaryHardwareHash: string; // Silicon anchor (canvas + webgl + audio + hardware)
   compositeHash: string;       // All 6 vectors
+  displayGeometryHash: string; // Pure display geometry: width x height, colorDepth, DPR
+  gpuModelHash: string;        // Normalized GPU unmasked renderer + texture size
+  timezoneLocaleHash: string;  // Timezone, calendar, language
+  storageToken: string;        // Client session storage anchor (absent in Incognito)
   totalExecutionTimeMs: number;
   totalEntropyBits: number;
   vectors: {
@@ -44,6 +49,38 @@ export async function sha256(input: string | Uint8Array): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', data as unknown as BufferSource);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Session storage token manager:
+ * Stores token in localStorage and sessionStorage so same-session clicks match instantly.
+ * When opening a fresh Incognito window, this storage is empty/wiped.
+ */
+export function getOrCreateStorageToken(): string {
+  try {
+    let token = localStorage.getItem('trace_zero_session_token');
+    if (!token) {
+      token = sessionStorage.getItem('trace_zero_session_token');
+    }
+    if (!token) {
+      token = 'tok_' + Math.random().toString(36).substring(2, 14) + Date.now().toString(36);
+      try { localStorage.setItem('trace_zero_session_token', token); } catch {}
+      try { sessionStorage.setItem('trace_zero_session_token', token); } catch {}
+    }
+    return token;
+  } catch {
+    return '';
+  }
+}
+
+export function readExistingStorageToken(): string {
+  try {
+    return localStorage.getItem('trace_zero_session_token') ||
+           sessionStorage.getItem('trace_zero_session_token') ||
+           '';
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -133,9 +170,10 @@ export async function probeCanvas(): Promise<VectorResult> {
  * Vector 2: WebGL Graphics Architecture Probe
  * Deep GPU pipeline inspection: unmasked driver strings, precision tables, and hardware limits.
  */
-export async function probeWebGL(): Promise<VectorResult> {
+export async function probeWebGL(): Promise<VectorResult & { gpuModelHash: string }> {
   const start = performance.now();
   let hash = 'unsupported';
+  let gpuModelHash = 'unsupported';
   let diagnostics: Record<string, any> = {};
 
   try {
@@ -182,13 +220,24 @@ export async function probeWebGL(): Promise<VectorResult> {
 
       const normalizedJson = JSON.stringify(payload);
       hash = await sha256(normalizedJson);
+
+      // Dedicated normalized unmasked GPU model hash (Farbling resistant)
+      const normVendor = String(vendor || '').trim().toLowerCase();
+      const normRenderer = String(renderer || '').trim().toLowerCase();
+      const viewportStr = maxViewportDims ? Array.from(maxViewportDims).join('x') : '0x0';
+      gpuModelHash = await sha256(`${normVendor}:${normRenderer}:${maxTextureSize}:${viewportStr}`);
+
       diagnostics = {
         ...payload,
+        gpuVendor: vendor,
+        gpuRenderer: renderer,
+        gpuModelHash,
         fullExtensionsList: supportedExtensions,
       };
     }
   } catch (err: any) {
     hash = await sha256('webgl_probe_error_' + (err?.message || 'unknown'));
+    gpuModelHash = await sha256('gpu_model_error');
     diagnostics = { error: err?.message || 'WebGL probe failed' };
   }
 
@@ -198,6 +247,7 @@ export async function probeWebGL(): Promise<VectorResult> {
     name: 'WebGL Architecture & Shader Precision',
     category: 'Silicon & GPU',
     hash,
+    gpuModelHash,
     executionTimeMs,
     entropyBits: 17.2,
     stability: 'IMMUTABLE_HARDWARE',
@@ -220,7 +270,7 @@ export async function probeAudio(): Promise<VectorResult> {
     const AudioContextClass = window.OfflineAudioContext || (window as any).webkitOfflineAudioContext;
 
     if (AudioContextClass) {
-      // 1 channel, 44100 frames, 44100 Hz sample rate
+      // 1 channel, 5000 frames, 44100 Hz sample rate
       const context = new AudioContextClass(1, 5000, 44100);
 
       const oscillator = context.createOscillator();
@@ -291,8 +341,9 @@ export async function probeAudio(): Promise<VectorResult> {
  * Vector 4: Display & Silicon Architecture Metrics
  * Non-brittle hardware properties: Screen dimensions, DPR, color depth, CPU cores, memory.
  * Excludes innerWidth/innerHeight to prevent window resize instability.
+ * Also computes an invariant displayGeometryHash (ONLY width x height, colorDepth, DPR).
  */
-export async function probeHardware(): Promise<VectorResult> {
+export async function probeHardware(): Promise<VectorResult & { displayGeometryHash: string }> {
   const start = performance.now();
 
   const screenWidth = window.screen?.width || 0;
@@ -306,12 +357,20 @@ export async function probeHardware(): Promise<VectorResult> {
   const deviceMemory = (navigator as any).deviceMemory || 'unsupported';
   const maxTouchPoints = navigator.maxTouchPoints || 0;
 
+  // Pure display geometry invariant across Normal, Incognito, and Brave Private!
+  // Excludes hardwareConcurrency and maxTouchPoints because Brave farbles them.
+  const displayGeometryPayload = `${screenWidth}x${screenHeight}:${colorDepth}:${devicePixelRatio}`;
+  const displayGeometryHash = await sha256(displayGeometryPayload);
+
   const payload = {
     resolution: `${screenWidth}x${screenHeight}`,
     availResolution: `${screenAvailWidth}x${screenAvailHeight}`,
+    screenWidth,
+    screenHeight,
     colorDepth,
     pixelDepth,
     devicePixelRatio,
+    displayGeometryHash,
     hardwareConcurrency,
     deviceMemory,
     maxTouchPoints,
@@ -325,6 +384,7 @@ export async function probeHardware(): Promise<VectorResult> {
     name: 'Display & Silicon Metrics',
     category: 'Display & Arch',
     hash,
+    displayGeometryHash,
     executionTimeMs,
     entropyBits: 12.1,
     stability: 'IMMUTABLE_HARDWARE',
@@ -337,13 +397,14 @@ export async function probeHardware(): Promise<VectorResult> {
  * Vector 5: Platform & Localization Architecture Probe
  * Platform headers, client hints platform, timezone string, calendar type, and time offsets.
  */
-export async function probeEnvironment(): Promise<VectorResult> {
+export async function probeEnvironment(): Promise<VectorResult & { timezoneLocaleHash: string }> {
   const start = performance.now();
 
   const platform = navigator.platform || 'unknown';
   const userAgentData = (navigator as any).userAgentData;
   const clientHintsPlatform = userAgentData?.platform || 'unknown';
   const languages = Array.isArray(navigator.languages) ? navigator.languages.join(',') : (navigator.language || '');
+  const primaryLanguage = navigator.language || (navigator.languages && navigator.languages[0]) || '';
   
   let timeZone = 'UTC';
   let calendar = 'gregory';
@@ -357,13 +418,18 @@ export async function probeEnvironment(): Promise<VectorResult> {
 
   const timezoneOffset = new Date().getTimezoneOffset();
 
+  // Invariant timezone and locale hash
+  const timezoneLocaleHash = await sha256(`${timeZone}:${calendar}:${primaryLanguage.toLowerCase()}:${platform.toLowerCase()}`);
+
   const payload = {
     platform,
     clientHintsPlatform,
     languages,
+    language: primaryLanguage,
     timeZone,
     calendar,
     timezoneOffset,
+    timezoneLocaleHash,
     doNotTrack: navigator.doNotTrack || 'unspecified',
   };
 
@@ -375,6 +441,7 @@ export async function probeEnvironment(): Promise<VectorResult> {
     name: 'Platform & Localization Architecture',
     category: 'Runtime & Fonts',
     hash,
+    timezoneLocaleHash,
     executionTimeMs,
     entropyBits: 8.9,
     stability: 'STABLE_SYSTEM',
@@ -474,7 +541,6 @@ export async function executeTelemetryProbes(): Promise<FingerprintReport> {
   ]);
 
   // Primary Hardware Silicon Hash: canvas + webgl + audio + hardware
-  // This immutable quadruple anchor ignores transient VPNs, incognito mode, and cookie wipes!
   const primaryHardwareHash = await sha256(
     `${canvas.hash}:${webgl.hash}:${audio.hash}:${hardware.hash}`
   );
@@ -483,6 +549,11 @@ export async function executeTelemetryProbes(): Promise<FingerprintReport> {
   const compositeHash = await sha256(
     `${canvas.hash}:${webgl.hash}:${audio.hash}:${hardware.hash}:${environment.hash}:${font.hash}`
   );
+
+  const displayGeometryHash = hardware.displayGeometryHash;
+  const gpuModelHash = webgl.gpuModelHash;
+  const timezoneLocaleHash = environment.timezoneLocaleHash;
+  const storageToken = readExistingStorageToken();
 
   const totalExecutionTimeMs = Number((performance.now() - t0).toFixed(2));
   const totalEntropyBits = Number(
@@ -493,6 +564,10 @@ export async function executeTelemetryProbes(): Promise<FingerprintReport> {
     timestamp: Date.now(),
     primaryHardwareHash,
     compositeHash,
+    displayGeometryHash,
+    gpuModelHash,
+    timezoneLocaleHash,
+    storageToken,
     totalExecutionTimeMs,
     totalEntropyBits,
     vectors: {

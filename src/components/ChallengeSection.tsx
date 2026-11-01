@@ -236,16 +236,23 @@ export const ChallengeSection: React.FC<ChallengeSectionProps> = ({
             <div className="space-y-3 pt-2">
               {evasionResult.identified ? (
                 <div className="border border-match/40 bg-match/5 p-4 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <div className="flex items-center gap-2 text-match">
                       <ShieldAlert className="h-4 w-4" />
                       <span className="font-mono text-xs font-bold uppercase tracking-widest">
                         FORENSIC INTERCEPTION SUCCESSFUL
                       </span>
                     </div>
-                    <span className="border border-match bg-match text-background px-2 py-0.5 font-mono text-2xs font-bold uppercase tracking-widest">
-                      {(evasionResult.confidenceScore * 100).toFixed(1)}% MATCH
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {evasionResult.isBraveFarblingDetected && (
+                        <span className="border border-mutated bg-mutated/10 text-mutated px-2 py-0.5 font-mono text-2xs uppercase tracking-widest font-bold">
+                          BRAVE FARBLING DEFEATED
+                        </span>
+                      )}
+                      <span className="border border-match bg-match text-background px-2 py-0.5 font-mono text-2xs font-bold uppercase tracking-widest">
+                        {(evasionResult.confidenceScore * 100).toFixed(1)}% MATCH
+                      </span>
+                    </div>
                   </div>
 
                   {/* Secret Phrase Revealed Monospace Display */}

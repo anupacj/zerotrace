@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { executeTelemetryProbes, FingerprintReport, VectorResult } from './lib/fingerprint';
+import { executeTelemetryProbes, FingerprintReport, VectorResult, getOrCreateStorageToken, readExistingStorageToken } from './lib/fingerprint';
 import { Header } from './components/Header';
 import { NetworkTelemetryBar } from './components/NetworkTelemetryBar';
 import { ChallengeSection } from './components/ChallengeSection';
@@ -95,11 +95,17 @@ export const App: React.FC = () => {
   const handleRegisterSecret = async (phrase: string, alias: string): Promise<boolean> => {
     if (!report) return false;
 
+    // Anchor storage token in client storage for instant same-session tracking
+    const storageToken = getOrCreateStorageToken();
+
     const payload = {
       secretPhrase: phrase,
       alias: alias || undefined,
       compositeHash: report.compositeHash,
       primaryHardwareHash: report.primaryHardwareHash,
+      displayGeometryHash: report.displayGeometryHash,
+      gpuModelHash: report.gpuModelHash,
+      timezoneLocaleHash: report.timezoneLocaleHash,
       canvasHash: report.vectors.canvas.hash,
       webglHash: report.vectors.webgl.hash,
       audioHash: report.vectors.audio.hash,
@@ -116,10 +122,26 @@ export const App: React.FC = () => {
         hardware: report.vectors.hardware.diagnostics,
         environment: report.vectors.environment.diagnostics,
         font: report.vectors.font.diagnostics,
-        renderer: report.vectors.webgl.diagnostics?.renderer,
+        storageToken,
+        screenWidth: report.vectors.hardware.diagnostics?.screenWidth,
+        screenHeight: report.vectors.hardware.diagnostics?.screenHeight,
+        colorDepth: report.vectors.hardware.diagnostics?.colorDepth,
+        pixelRatio: report.vectors.hardware.diagnostics?.devicePixelRatio,
+        displayGeometryHash: report.displayGeometryHash,
+        gpuRenderer: report.vectors.webgl.diagnostics?.gpuRenderer || report.vectors.webgl.diagnostics?.renderer,
+        gpuVendor: report.vectors.webgl.diagnostics?.gpuVendor || report.vectors.webgl.diagnostics?.vendor,
+        maxTextureSize: report.vectors.webgl.diagnostics?.maxTextureSize,
+        gpuModelHash: report.gpuModelHash,
+        timezone: report.vectors.environment.diagnostics?.timeZone,
+        calendar: report.vectors.environment.diagnostics?.calendar,
+        language: report.vectors.environment.diagnostics?.language,
+        platform: report.vectors.environment.diagnostics?.platform,
+        cores: report.vectors.hardware.diagnostics?.hardwareConcurrency,
+        detectedFontsList: report.vectors.font.diagnostics?.detectedFontsList,
+        detectedFontsCount: report.vectors.font.diagnostics?.detectedFontsCount,
+        renderer: report.vectors.webgl.diagnostics?.gpuRenderer || report.vectors.webgl.diagnostics?.renderer,
         resolution: report.vectors.hardware.diagnostics?.resolution,
         hardwareConcurrency: report.vectors.hardware.diagnostics?.hardwareConcurrency,
-        detectedFontsCount: report.vectors.font.diagnostics?.detectedFontsCount,
       }
     };
 
@@ -153,9 +175,14 @@ export const App: React.FC = () => {
       const freshReport = await executeTelemetryProbes();
       setReport(freshReport);
 
+      const storageToken = readExistingStorageToken();
+
       const payload = {
         compositeHash: freshReport.compositeHash,
         primaryHardwareHash: freshReport.primaryHardwareHash,
+        displayGeometryHash: freshReport.displayGeometryHash,
+        gpuModelHash: freshReport.gpuModelHash,
+        timezoneLocaleHash: freshReport.timezoneLocaleHash,
         canvasHash: freshReport.vectors.canvas.hash,
         webglHash: freshReport.vectors.webgl.hash,
         audioHash: freshReport.vectors.audio.hash,
@@ -170,10 +197,26 @@ export const App: React.FC = () => {
           hardware: freshReport.vectors.hardware.diagnostics,
           environment: freshReport.vectors.environment.diagnostics,
           font: freshReport.vectors.font.diagnostics,
-          renderer: freshReport.vectors.webgl.diagnostics?.renderer,
+          storageToken,
+          screenWidth: freshReport.vectors.hardware.diagnostics?.screenWidth,
+          screenHeight: freshReport.vectors.hardware.diagnostics?.screenHeight,
+          colorDepth: freshReport.vectors.hardware.diagnostics?.colorDepth,
+          pixelRatio: freshReport.vectors.hardware.diagnostics?.devicePixelRatio,
+          displayGeometryHash: freshReport.displayGeometryHash,
+          gpuRenderer: freshReport.vectors.webgl.diagnostics?.gpuRenderer || freshReport.vectors.webgl.diagnostics?.renderer,
+          gpuVendor: freshReport.vectors.webgl.diagnostics?.gpuVendor || freshReport.vectors.webgl.diagnostics?.vendor,
+          maxTextureSize: freshReport.vectors.webgl.diagnostics?.maxTextureSize,
+          gpuModelHash: freshReport.gpuModelHash,
+          timezone: freshReport.vectors.environment.diagnostics?.timeZone,
+          calendar: freshReport.vectors.environment.diagnostics?.calendar,
+          language: freshReport.vectors.environment.diagnostics?.language,
+          platform: freshReport.vectors.environment.diagnostics?.platform,
+          cores: freshReport.vectors.hardware.diagnostics?.hardwareConcurrency,
+          detectedFontsList: freshReport.vectors.font.diagnostics?.detectedFontsList,
+          detectedFontsCount: freshReport.vectors.font.diagnostics?.detectedFontsCount,
+          renderer: freshReport.vectors.webgl.diagnostics?.gpuRenderer || freshReport.vectors.webgl.diagnostics?.renderer,
           resolution: freshReport.vectors.hardware.diagnostics?.resolution,
           hardwareConcurrency: freshReport.vectors.hardware.diagnostics?.hardwareConcurrency,
-          detectedFontsCount: freshReport.vectors.font.diagnostics?.detectedFontsCount,
         }
       };
 
@@ -231,7 +274,7 @@ export const App: React.FC = () => {
                 FORENSIC SYSTEM OBJECTIVE // PERSISTENCE-FREE RE-IDENTIFICATION
               </div>
               <p className="font-sans text-xs text-muted">
-                Demonstrates how low-level silicon micro-architectures (WebGL shader formats, Canvas bezier sub-pixel rasterization, and Audio DSP float decay) bypass browser sandbox storage wipes and VPN IP mutations.
+                Demonstrates how low-level silicon micro-architectures (Physical Display Geometry, WebGL GPU parameters, and Audio DSP float decay) bypass browser sandbox storage wipes, VPN IP mutations, and Brave Shields farbling.
               </p>
             </div>
           </div>
@@ -240,7 +283,7 @@ export const App: React.FC = () => {
               D1 SQLITE: <span className="text-match font-medium">CONNECTED</span>
             </span>
             <span className="border border-border bg-background px-2.5 py-1">
-              ZERO COOKIES: <span className="text-match font-medium">ENFORCED</span>
+              FARBLING RESISTANT: <span className="text-match font-medium">ACTIVE</span>
             </span>
           </div>
         </div>
@@ -287,6 +330,10 @@ export const App: React.FC = () => {
           timestamp: report?.timestamp,
           primaryHardwareHash: report?.primaryHardwareHash,
           compositeHash: report?.compositeHash,
+          displayGeometryHash: report?.displayGeometryHash,
+          gpuModelHash: report?.gpuModelHash,
+          timezoneLocaleHash: report?.timezoneLocaleHash,
+          storageToken: report?.storageToken,
           totalEntropyBits: report?.totalEntropyBits,
           totalExecutionTimeMs: report?.totalExecutionTimeMs,
           network,
@@ -302,7 +349,7 @@ export const App: React.FC = () => {
             <span>TRACE // ZERO — DETERMINISTIC SILICON TELEMETRY RESEARCH TOOL</span>
           </div>
           <div>
-            CLOUDFLARE PAGES FUNCTIONS // CLOUDFLARE D1 (SQLITE) // WEB CRYPTO SHA-256
+            CLOUDFLARE PAGES FUNCTIONS // CLOUDFLARE D1 (SQLITE) // MULTI-TIER FUZZY ENGINE
           </div>
         </div>
       </footer>
